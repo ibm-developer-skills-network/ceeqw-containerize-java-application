@@ -1,0 +1,35 @@
+FROM maven:3.9-eclipse-temurin-17 AS builder
+
+WORKDIR /app
+
+# Copy dependencies configuration first for better caching
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+
+# Copy and build source code
+COPY src ./src
+RUN mvn clean package -DskipTests -B
+
+FROM eclipse-temurin:17-jre-alpine
+
+# Install minimal packages and create user
+RUN apk add --no-cache curl dumb-init && \
+    addgroup -g 1001 -S appuser && \
+    adduser -S appuser -G appuser -u 1001
+
+WORKDIR /app
+USER appuser
+
+# Copy the built JAR with proper ownership
+COPY --from=builder --chown=appuser:appuser /app/target/order-service-*.jar app.jar
+
+# Container-optimized JVM settings
+ENV JAVA_OPTS="-XX:+UseContainerSupport \
+    -XX:MaxRAMPercentage=75.0 \
+    -XX:+UseG1GC \
+    -XX:MaxGCPauseMillis=100 \
+    -Djava.security.egd=file:/dev/./urandom"
+
+EXPOSE 8080
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
